@@ -14,7 +14,7 @@ Cutie is a video object segmentation framework -- a follow-up work of [XMem](htt
 This repository contains code for standard video object segmentation and a GUI tool for interactive video segmentation.
 The GUI tool additionally contains the "permanent memory" (from [XMem++](https://github.com/max810/XMem2)) option for better controllability.
 
-![overview](https://imgur.com/px5g437.jpg)
+![overview](https://imgur.com/k84c965.jpg)
 
 ## Demo Video
 
@@ -65,7 +65,7 @@ If you are running this on a remote server, X11 forwarding is possible. Start by
 
 ![demo](https://i.imgur.com/nqlYqTq.jpg)
 
-(For single video evaluation, see `process_video.py` from https://github.com/hkchengrex/Cutie/pull/16)
+(For single video evaluation, see the unofficial script `process_video.py` from https://github.com/hkchengrex/Cutie/pull/16)
 
 ## Training and Evaluation
 
