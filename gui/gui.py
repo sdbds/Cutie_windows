@@ -1,4 +1,5 @@
 import functools
+from pathlib import Path
 
 import numpy as np
 from omegaconf import DictConfig
@@ -15,6 +16,7 @@ from gui.gui_utils import *
 
 
 class GUI(QWidget):
+
     def __init__(self, controller, cfg: DictConfig) -> None:
         super().__init__()
 
@@ -103,12 +105,17 @@ class GUI(QWidget):
         self.combo.addItem("light")
         self.combo.addItem("popup")
         self.combo.addItem("layer")
+        self.combo.addItem("rgba")
         self.combo.setCurrentText('davis')
         self.combo.currentTextChanged.connect(controller.set_vis_mode)
 
-        self.save_visualization_checkbox = QCheckBox(self)
-        self.save_visualization_checkbox.toggled.connect(controller.on_save_visualization_toggle)
-        self.save_visualization_checkbox.setChecked(False)
+        self.save_visualization_combo = QComboBox(self)
+        self.save_visualization_combo.addItem("None")
+        self.save_visualization_combo.addItem("Always")
+        self.save_visualization_combo.addItem("Propagation only (higher quality)")
+        self.combo.setCurrentText('None')
+        self.save_visualization_combo.currentTextChanged.connect(
+            controller.on_set_save_visualization_mode)
 
         self.save_soft_mask_checkbox = QCheckBox(self)
         self.save_soft_mask_checkbox.toggled.connect(controller.on_save_soft_mask_toggle)
@@ -188,7 +195,7 @@ class GUI(QWidget):
         self.tips.setReadOnly(True)
         self.tips.setTextInteractionFlags(Qt.NoTextInteraction)
         self.tips.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        with open('./gui/TIPS.md') as f:
+        with open(Path(__file__).parent / 'TIPS.md', 'r') as f:
             self.tips.setMarkdown(f.read())
 
         # navigator
@@ -223,13 +230,13 @@ class GUI(QWidget):
         overlay_botbox = QHBoxLayout()
         overlay_topbox.setAlignment(Qt.AlignmentFlag.AlignLeft)
         overlay_botbox.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        overlay_topbox.addWidget(QLabel('Overlay mode'))
+        overlay_topbox.addWidget(QLabel('Visualization mode'))
         overlay_topbox.addWidget(self.combo)
         overlay_topbox.addWidget(QLabel('Save soft mask during propagation'))
         overlay_topbox.addWidget(self.save_soft_mask_checkbox)
         overlay_topbox.addWidget(self.export_binary_button)
-        overlay_botbox.addWidget(QLabel('Save overlay'))
-        overlay_botbox.addWidget(self.save_visualization_checkbox)
+        overlay_botbox.addWidget(QLabel('Save visualization'))
+        overlay_botbox.addWidget(self.save_visualization_combo)
         overlay_botbox.addWidget(self.export_video_button)
         overlay_botbox.addWidget(QLabel('Output FPS: '))
         overlay_botbox.addWidget(self.fps_dial)
@@ -313,9 +320,33 @@ class GUI(QWidget):
             QShortcut(QKeySequence(f"Ctrl+{i}"),
                       self).activated.connect(functools.partial(controller.hit_number_key, i))
 
-        # <- and -> shortcuts
+        # next/prev frame shortcuts
         QShortcut(QKeySequence(Qt.Key.Key_Left), self).activated.connect(controller.on_prev_frame)
         QShortcut(QKeySequence(Qt.Key.Key_Right), self).activated.connect(controller.on_next_frame)
+
+        # +/- 10 frames shortcuts
+        QShortcut(QKeySequence(Qt.Key.Key_Left | Qt.KeyboardModifier.ShiftModifier),
+                    self).activated.connect(functools.partial(controller.on_prev_frame, 10))
+        QShortcut(QKeySequence(Qt.Key.Key_Right | Qt.KeyboardModifier.ShiftModifier),
+                    self).activated.connect(functools.partial(controller.on_next_frame, 10))
+        
+        # first/last frame shortcuts
+        QShortcut(QKeySequence(Qt.Key.Key_Left | Qt.KeyboardModifier.AltModifier),
+                    self).activated.connect(functools.partial(controller.on_prev_frame, 999999))
+        QShortcut(QKeySequence(Qt.Key.Key_Right | Qt.KeyboardModifier.AltModifier),
+                    self).activated.connect(functools.partial(controller.on_next_frame, 999999))
+        
+        # commit to permanent memory shortcut
+        QShortcut(QKeySequence(Qt.Key.Key_C), self).activated.connect(controller.on_commit)
+
+        # propagate forward/backward/pause shortcuts
+        QShortcut(QKeySequence(Qt.Key.Key_F), self).activated.connect(controller.on_forward_propagation)
+        QShortcut(QKeySequence(Qt.Key.Key_Space), self).activated.connect(controller.on_forward_propagation)
+        QShortcut(QKeySequence(Qt.Key.Key_B), self).activated.connect(controller.on_backward_propagation)
+
+        # quit shortcut
+        QShortcut(QKeySequence(Qt.Key.Key_Q), self).activated.connect(self.close)
+
 
     def resizeEvent(self, event):
         self.controller.show_current_frame()
@@ -326,6 +357,15 @@ class GUI(QWidget):
 
     def set_canvas(self, image):
         height, width, channel = image.shape
+        # if the image is RGBA, convert to RGB first by coloring the background green
+        if channel == 4:
+            image_rgb = image[:, :, :3].copy()
+            alpha = image[:, :, 3].astype(np.float32) / 255
+            green_bg = np.array([0, 255, 0])
+            # soft blending
+            image = (image_rgb * alpha[:, :, np.newaxis] + green_bg[np.newaxis, np.newaxis, :] *
+                     (1 - alpha[:, :, np.newaxis])).astype(np.uint8)
+
         bytesPerLine = 3 * width
 
         qImg = QImage(image.data, width, height, bytesPerLine, QImage.Format.Format_RGB888)

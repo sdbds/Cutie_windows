@@ -16,6 +16,7 @@ log = logging.getLogger()
 
 
 class InferenceCore:
+
     def __init__(self,
                  network: CUTIE,
                  cfg: DictConfig,
@@ -100,7 +101,7 @@ class InferenceCore:
             as_permanent = 'first'
 
         self.memory.initialize_sensory_if_needed(key, self.object_manager.all_obj_ids)
-        msk_value, sensory, obj_value, self.obj_logits = self.network.encode_mask(
+        msk_value, sensory, obj_value, _ = self.network.encode_mask(
             image,
             pix_feat,
             self.memory.get_sensory(self.object_manager.all_obj_ids),
@@ -219,8 +220,7 @@ class InferenceCore:
                     if idx_mask:
                         mask = F.interpolate(mask.unsqueeze(0).unsqueeze(0).float(),
                                              size=(new_h, new_w),
-                                             mode='nearest',
-                                             align_corners=False)[0, 0].round().long()
+                                             mode='nearest-exact')[0, 0].round().long()
                     else:
                         mask = F.interpolate(mask.unsqueeze(0),
                                              size=(new_h, new_w),
@@ -327,55 +327,19 @@ class InferenceCore:
 
         return output_prob
 
-    def get_aux_outputs(self, image: torch.Tensor) -> Dict[str, torch.Tensor]:
-        image, pads = pad_divide_by(image, 16)
-        image = image.unsqueeze(0)  # add the batch dimension
-        _, pix_feat = self.image_feature_store.get_features(self.curr_ti, image)
+    def delete_objects(self, objects: List[int]) -> None:
+        """
+        Delete the given objects from the memory.
+        """
+        self.object_manager.delete_objects(objects)
+        self.memory.purge_except(self.object_manager.all_obj_ids)
 
-        aux_inputs = self.memory.aux
-        aux_outputs = self.network.compute_aux(pix_feat, aux_inputs, selector=None)
-        aux_outputs['q_weights'] = aux_inputs['q_weights']
-        aux_outputs['p_weights'] = aux_inputs['p_weights']
+    def output_prob_to_mask(self, output_prob: torch.Tensor) -> torch.Tensor:
+        mask = torch.argmax(output_prob, dim=0)
 
-        for k, v in aux_outputs.items():
-            if len(v.shape) == 5:
-                aux_outputs[k] = F.interpolate(v[0],
-                                               size=image.shape[-2:],
-                                               mode='bilinear',
-                                               align_corners=False)
-            elif 'weights' in k:
-                b, num_objects, num_heads, num_queries, h, w = v.shape
-                v = v.view(num_objects * num_heads, num_queries, h, w)
-                v = F.interpolate(v, size=image.shape[-2:], mode='bilinear', align_corners=False)
-                aux_outputs[k] = v.view(num_objects, num_heads, num_queries, *image.shape[-2:])
-            else:
-                aux_outputs[k] = F.interpolate(v,
-                                               size=image.shape[-2:],
-                                               mode='bilinear',
-                                               align_corners=False)[0]
-            aux_outputs[k] = unpad(aux_outputs[k], pads)
-            if 'weights' in k:
-                weights = aux_outputs[k]
-                weights = weights / (weights.max(-1, keepdim=True)[0].max(-2, keepdim=True)[0] +
-                                     1e-8)
-                aux_outputs[k] = (weights * 255).cpu().numpy()
-            else:
-                aux_outputs[k] = (aux_outputs[k].softmax(dim=0) * 255).cpu().numpy()
+        # index in tensor != object id -- remap the ids here
+        new_mask = torch.zeros_like(mask)
+        for tmp_id, obj in self.object_manager.tmp_id_to_obj.items():
+            new_mask[mask == tmp_id] = obj.id
 
-        self.image_feature_store.delete(self.curr_ti)
-        return aux_outputs
-
-    def get_aux_object_weights(self, image: torch.Tensor) -> np.ndarray:
-        image, pads = pad_divide_by(image, 16)
-        # B*num_objects*H*W*num_queries -> num_objects*num_queries*H*W
-        # weights = F.softmax(self.obj_logits, dim=-1)[0]
-        weights = F.sigmoid(self.obj_logits)[0]
-        weights = weights.permute(0, 3, 1, 2).contiguous()
-        weights = F.interpolate(weights,
-                                size=image.shape[-2:],
-                                mode='bilinear',
-                                align_corners=False)
-        # weights = weights / (weights.max(-1, keepdim=True)[0].max(-2, keepdim=True)[0])
-        weights = unpad(weights, pads)
-        weights = (weights * 255).cpu().numpy()
-        return weights
+        return new_mask

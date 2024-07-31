@@ -1,10 +1,10 @@
-# Putting the Object Back into Video Object Segmentation
-
-![titlecard](https://imgur.com/6K7BgZ7.png)
+# [Putting the Object Back into Video Object Segmentation](https://hkchengrex.github.io/Cutie)
 
 [Ho Kei Cheng](https://hkchengrex.github.io/), [Seoung Wug Oh](https://sites.google.com/view/seoungwugoh/), [Brian Price](https://www.brianpricephd.com/), [Joon-Young Lee](https://joonyoung-cv.github.io/), [Alexander Schwing](https://www.alexander-schwing.de/)
 
 University of Illinois Urbana-Champaign and Adobe
+
+CVPR 2024, Highlight
 
 [[arXiV]](https://arxiv.org/abs/2310.12982) [[PDF]](https://arxiv.org/pdf/2310.12982.pdf) [[Project Page]](https://hkchengrex.github.io/Cutie/) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1yo43XTbjxuWA7XgCUO9qxAi7wBI6HzvP?usp=sharing)
 
@@ -54,6 +54,52 @@ python scripts/download_models.py
 
 ## Quick Start
 
+### Scripting Demo
+
+This is probably the best starting point if you want to use Cutie in your project. Hopefully, the script is self-explanatory (additional comments in `scripting_demo.py`). If not, feel free to open an issue. For more advanced usage, like adding or removing objects, see `scripting_demo_add_del_objects.py`.
+
+```python
+@torch.inference_mode()
+@torch.cuda.amp.autocast()
+def main():
+
+    cutie = get_default_model()
+    processor = InferenceCore(cutie, cfg=cutie.cfg)
+    # the processor matches the shorter edge of the input to this size
+    # you might want to experiment with different sizes, -1 keeps the original size
+    processor.max_internal_size = 480
+
+    image_path = './examples/images/bike'
+    images = sorted(os.listdir(image_path))  # ordering is important
+    mask = Image.open('./examples/masks/bike/00000.png')
+    palette = mask.getpalette()
+    objects = np.unique(np.array(mask))
+    objects = objects[objects != 0].tolist()  # background "0" does not count as an object
+    mask = torch.from_numpy(np.array(mask)).cuda()
+
+    for ti, image_name in enumerate(images):
+        image = Image.open(os.path.join(image_path, image_name))
+        image = to_tensor(image).cuda().float()
+
+        if ti == 0:
+            output_prob = processor.step(image, mask, objects=objects)
+        else:
+            output_prob = processor.step(image)
+
+        # convert output probabilities to an object mask
+        mask = processor.output_prob_to_mask(output_prob)
+
+        # visualize prediction
+        mask = Image.fromarray(mask.cpu().numpy().astype(np.uint8))
+        mask.putpalette(palette)
+        mask.show()  # or use mask.save(...) to save it somewhere
+
+
+main()
+```
+
+### Interactive Demo
+
 Start the interactive demo with:
 
 ```bash
@@ -65,7 +111,7 @@ If you are running this on a remote server, X11 forwarding is possible. Start by
 
 ![demo](https://i.imgur.com/nqlYqTq.jpg)
 
-(For single video evaluation, see the unofficial script `process_video.py` from https://github.com/hkchengrex/Cutie/pull/16)
+(For single video evaluation, see the unofficial script `scripts/process_video.py` from https://github.com/hkchengrex/Cutie/pull/16)
 
 ## Training and Evaluation
 

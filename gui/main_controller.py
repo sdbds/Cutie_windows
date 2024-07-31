@@ -33,6 +33,7 @@ log = logging.getLogger()
 
 
 class MainController():
+
     def __init__(self, cfg: DictConfig) -> None:
         super().__init__()
 
@@ -60,6 +61,8 @@ class MainController():
 
         # main components
         self.res_man = ResourceManager(cfg)
+        if 'workspace_init_only' in cfg and cfg['workspace_init_only']:
+            return
         self.processor = InferenceCore(self.cutie, self.cfg)
         self.gui = GUI(self, self.cfg)
 
@@ -85,7 +88,7 @@ class MainController():
         # visualization info
         self.vis_mode: str = 'davis'
         self.vis_image: np.ndarray = None
-        self.save_visualization: bool = False
+        self.save_visualization_mode: str = 'None'
         self.save_soft_mask: bool = False
 
         self.interacted_prob: torch.Tensor = None
@@ -209,27 +212,31 @@ class MainController():
     def update_canvas(self):
         self.gui.set_canvas(self.vis_image)
 
-    def update_current_image_fast(self):
+    def update_current_image_fast(self, invalid_soft_mask: bool = False):
         # fast path, uses gpu. Changes the image in-place to avoid copying
         # thus current_image_torch must be voided afterwards
+        # do_no_save_soft_mask is an override to solve #41
         self.vis_image = get_visualization_torch(self.vis_mode, self.curr_image_torch,
                                                  self.curr_prob, self.overlay_layer_torch,
                                                  self.vis_target_objects)
         self.curr_image_torch = None
         self.vis_image = np.ascontiguousarray(self.vis_image)
-        if self.save_visualization:
+        save_visualization = self.save_visualization_mode in [
+            'Propagation only (higher quality)', 'Always'
+        ]
+        if save_visualization and not invalid_soft_mask:
             self.res_man.save_visualization(self.curr_ti, self.vis_mode, self.vis_image)
-        if self.save_soft_mask:
+        if self.save_soft_mask and not invalid_soft_mask:
             self.res_man.save_soft_mask(self.curr_ti, self.curr_prob.cpu().numpy())
         self.gui.set_canvas(self.vis_image)
 
-    def show_current_frame(self, fast: bool = False):
+    def show_current_frame(self, fast: bool = False, invalid_soft_mask: bool = False):
         # Re-compute overlay and show the image
         if fast:
-            self.update_current_image_fast()
+            self.update_current_image_fast(invalid_soft_mask)
         else:
             self.compose_current_im()
-            if self.save_visualization:
+            if self.save_visualization_mode == 'Always':
                 self.res_man.save_visualization(self.curr_ti, self.vis_mode, self.vis_image)
             self.update_canvas()
 
@@ -301,7 +308,8 @@ class MainController():
             # clear
             self.interacted_prob = None
             self.reset_this_interaction()
-            self.show_current_frame(fast=True)
+            # override this for #41
+            self.show_current_frame(fast=True, invalid_soft_mask=True)
 
             self.propagating = True
             self.gui.clear_all_mem_button.setEnabled(False)
@@ -446,12 +454,12 @@ class MainController():
         if self.interaction is not None:
             self.interaction = None
 
-    def on_prev_frame(self):
-        new_ti = max(0, self.curr_ti - 1)
+    def on_prev_frame(self, step=1):
+        new_ti = max(0, self.curr_ti - step)
         self.gui.tl_slider.setValue(new_ti)
 
-    def on_next_frame(self):
-        new_ti = min(self.curr_ti + 1, self.length - 1)
+    def on_next_frame(self, step=1):
+        new_ti = min(self.curr_ti + step, self.length - 1)
         self.gui.tl_slider.setValue(new_ti)
 
     def update_gpu_gauges(self):
@@ -592,8 +600,8 @@ class MainController():
         except FileNotFoundError:
             self.gui.text(f'{file_name} not found.')
 
-    def on_save_visualization_toggle(self):
-        self.save_visualization = self.gui.save_visualization_checkbox.isChecked()
+    def on_set_save_visualization_mode(self):
+        self.save_visualization_mode = self.gui.save_visualization_combo.currentText()
 
     def on_save_soft_mask_toggle(self):
         self.save_soft_mask = self.gui.save_soft_mask_checkbox.isChecked()
